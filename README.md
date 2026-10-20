@@ -34,11 +34,21 @@ npm run preview
 
 ## Variables
 
+En el backend: `SUPABASE_URL` y `SUPABASE_ANON_KEY`.  
+En este frontend Vite deben llamarse así:
+
+| Backend | Frontend (Vite) |
+|---|---|
+| `SUPABASE_URL` | `VITE_SUPABASE_URL` |
+| `SUPABASE_ANON_KEY` | `VITE_SUPABASE_ANON_KEY` |
+
 | Variable | Uso |
 |---|---|
 | `VITE_SUPABASE_URL` | URL del proyecto Supabase |
 | `VITE_SUPABASE_ANON_KEY` | Anon key (nunca service role) |
 | `VITE_DASH_PASSWORD` | Opcional: gate simple en el navegador (solo disuasión) |
+
+**No copies el `.env` completo del backend.** Vite solo lee variables `VITE_*`, y el service role / OpenAI / ManyChat no deben ir al navegador.
 
 ## Tablas leídas
 

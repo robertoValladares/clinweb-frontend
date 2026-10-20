@@ -1,0 +1,26 @@
+# Proyecto Compose propio: no comparte red, contenedores ni orphans con cliniweb-backend.
+name: cliniweb-frontend
+
+services:
+  frontend:
+    image: ${APP_IMAGE:?APP_IMAGE no definido (lo escribe el deploy en .env)}
+    container_name: cliniweb-frontend
+    restart: unless-stopped
+    ports:
+      # Solo localhost: el Nginx del host hace de proxy público con TLS.
+      - "127.0.0.1:3300:8080"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

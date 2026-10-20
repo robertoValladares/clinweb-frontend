@@ -1,0 +1,20 @@
+node_modules
+dist
+dist-ssr
+.git
+.github
+.vscode
+.idea
+*.log
+logs
+coverage
+
+# Vite leería estos archivos durante el build: nunca deben entrar a la imagen.
+.env
+.env.*
+*.local
+
+Dockerfile
+.dockerignore
+docker-compose*.yml
+README.md

@@ -1,0 +1,289 @@
+name: Deploy production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy-cliniweb-frontend-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  # GHCR exige minúsculas
+  IMAGE_NAME: ghcr.io/robertovalladares/cliniweb-frontend
+  CONTAINER_NAME: cliniweb-frontend
+  COMPOSE_FILE_NAME: docker-compose.prod.yml
+  HOST_PORT: "3300"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate secrets and build variables
+        env:
+          CONTABO_HOST: ${{ secrets.CONTABO_HOST }}
+          CONTABO_USER: ${{ secrets.CONTABO_USER }}
+          CONTABO_SSH_KEY: ${{ secrets.CONTABO_SSH_KEY }}
+          CONTABO_DEPLOY_PATH: ${{ secrets.CONTABO_DEPLOY_PATH }}
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: |
+          missing=0
+          for name in CONTABO_HOST CONTABO_USER CONTABO_SSH_KEY CONTABO_DEPLOY_PATH VITE_SUPABASE_URL VITE_SUPABASE_ANON_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Falta ${name} en GitHub → Settings → Environments → production"
+              missing=1
+            fi
+          done
+          # Evita desplegar por error encima de otro proyecto del servidor.
+          case "$CONTABO_DEPLOY_PATH" in
+            /var/www/cliniweb/cliniweb-frontend) ;;
+            *) echo "::error::CONTABO_DEPLOY_PATH inesperado: ${CONTABO_DEPLOY_PATH}"; missing=1 ;;
+          esac
+          [ "$missing" -eq 0 ] || exit 1
+          echo "Configuración OK (host=${CONTABO_HOST}, path=${CONTABO_DEPLOY_PATH})"
+
+      # ── Validación del proyecto ───────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check and build
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: npm run build
+
+      # ── Imagen Docker → GHCR ──────────────────────────────────
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=,format=long
+            type=raw,value=latest
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VITE_SUPABASE_URL=${{ vars.VITE_SUPABASE_URL }}
+            VITE_SUPABASE_ANON_KEY=${{ secrets.VITE_SUPABASE_ANON_KEY }}
+            VITE_DASH_PASSWORD=${{ secrets.VITE_DASH_PASSWORD }}
+          cache-from: type=gha,scope=cliniweb-frontend
+          cache-to: type=gha,mode=max,scope=cliniweb-frontend
+          provenance: false
+
+      # ── SSH a Contabo ─────────────────────────────────────────
+      - name: Configure SSH
+        env:
+          CONTABO_HOST: ${{ secrets.CONTABO_HOST }}
+          CONTABO_USER: ${{ secrets.CONTABO_USER }}
+          CONTABO_SSH_KEY: ${{ secrets.CONTABO_SSH_KEY }}
+          CONTABO_KNOWN_HOSTS: ${{ secrets.CONTABO_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          # Normaliza CRLF por si la clave se pegó desde Windows.
+          printf '%s\n' "$CONTABO_SSH_KEY" | tr -d '\r' > ~/.ssh/contabo_deploy
+          chmod 600 ~/.ssh/contabo_deploy
+          ssh-keygen -y -f ~/.ssh/contabo_deploy >/dev/null \
+            || { echo "::error::CONTABO_SSH_KEY no es una clave privada válida (¿tiene passphrase?)"; exit 1; }
+
+          if [ -n "${CONTABO_KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$CONTABO_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
+            echo "Host key fijada desde CONTABO_KNOWN_HOSTS"
+          else
+            echo "::warning::CONTABO_KNOWN_HOSTS no definido: se usa ssh-keyscan (confianza en el primer uso). Compara estas huellas con las del servidor y fija el secret."
+            ssh-keyscan -T 15 -t ed25519,ecdsa,rsa "$CONTABO_HOST" 2>/dev/null > ~/.ssh/known_hosts || true
+            [ -s ~/.ssh/known_hosts ] || { echo "::error::ssh-keyscan no obtuvo la host key de ${CONTABO_HOST}"; exit 1; }
+          fi
+          ssh-keygen -lf ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+          cat > ~/.ssh/config <<EOF
+          Host contabo
+            HostName ${CONTABO_HOST}
+            User ${CONTABO_USER}
+            IdentityFile ~/.ssh/contabo_deploy
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile ~/.ssh/known_hosts
+            ServerAliveInterval 30
+            ServerAliveCountMax 4
+            ConnectTimeout 20
+          EOF
+          chmod 600 ~/.ssh/config
+
+          ssh contabo 'echo "SSH OK: $(whoami)@$(hostname)"; docker compose version'
+
+      - name: Copy compose file to Contabo
+        env:
+          CONTABO_DEPLOY_PATH: ${{ secrets.CONTABO_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          ssh contabo "mkdir -p $(printf %q "$CONTABO_DEPLOY_PATH")"
+          scp -q "$COMPOSE_FILE_NAME" "contabo:${CONTABO_DEPLOY_PATH}/${COMPOSE_FILE_NAME}"
+          echo "Copiado ${COMPOSE_FILE_NAME} → ${CONTABO_DEPLOY_PATH}"
+
+      # ── Pull + up + verificación ──────────────────────────────
+      - name: Deploy on Contabo
+        env:
+          CONTABO_DEPLOY_PATH: ${{ secrets.CONTABO_DEPLOY_PATH }}
+          # Token efímero del job, solo para docker pull. Caduca al terminar el workflow
+          # y se borra del servidor al final del script (DOCKER_CONFIG temporal).
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          APP_IMAGE: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          cat > "$RUNNER_TEMP/remote-deploy.sh" <<'REMOTE'
+          set -euo pipefail
+
+          fail() {
+            echo "::error::$1"
+            echo "=== docker compose ps ==="
+            docker compose -f "$COMPOSE_FILE_NAME" ps || true
+            echo "=== logs ${CONTAINER_NAME} (últimas 150 líneas) ==="
+            docker logs --tail=150 "$CONTAINER_NAME" 2>&1 || true
+            exit 1
+          }
+
+          cd "$DEPLOY_PATH"
+
+          # Config Docker aislada: el token no toca ~/.docker de deploy ni a otros deploys.
+          DOCKER_CONFIG="$(mktemp -d)"
+          export DOCKER_CONFIG
+          cleanup() {
+            docker logout ghcr.io >/dev/null 2>&1 || true
+            rm -rf "$DOCKER_CONFIG"
+          }
+          trap cleanup EXIT
+          if [ -d "$HOME/.docker/cli-plugins" ]; then
+            ln -s "$HOME/.docker/cli-plugins" "$DOCKER_CONFIG/cli-plugins"
+          fi
+
+          retry() {
+            local label="$1"; shift
+            local waits=(10 20 40 80)
+            local attempt=1 max=$(( ${#waits[@]} + 1 ))
+            until "$@"; do
+              if [ "$attempt" -ge "$max" ]; then
+                echo "${label}: falló tras ${max} intentos"
+                return 1
+              fi
+              echo "${label}: intento ${attempt}/${max} falló; reintento en ${waits[$((attempt - 1))]}s"
+              sleep "${waits[$((attempt - 1))]}"
+              attempt=$((attempt + 1))
+            done
+          }
+
+          ghcr_login() { printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin >/dev/null; }
+
+          # Puerto ocupado por otro servicio → abortar sin tocar nada.
+          if ss -ltnH "( sport = :${HOST_PORT} )" | grep -q .; then
+            owner="$(docker ps --filter "publish=${HOST_PORT}" --format '{{.Names}}' | head -n1)"
+            if [ "$owner" != "$CONTAINER_NAME" ]; then
+              echo "::error::El puerto 127.0.0.1:${HOST_PORT} ya está en uso por '${owner:-proceso fuera de Docker}'. No se despliega."
+              ss -ltnp "( sport = :${HOST_PORT} )" || true
+              exit 1
+            fi
+          fi
+
+          retry "docker login ghcr.io" ghcr_login || fail "No se pudo iniciar sesión en GHCR"
+          unset GHCR_TOKEN
+
+          # El compose lee APP_IMAGE de este .env (lo gestiona el deploy; el frontend no tiene env de runtime).
+          printf 'APP_IMAGE=%s\n' "$APP_IMAGE" > .env.tmp && mv .env.tmp .env
+
+          retry "docker compose pull" docker compose -f "$COMPOSE_FILE_NAME" pull \
+            || fail "docker compose pull falló (¿rate limit de GHCR o permisos del paquete?)"
+
+          docker compose -f "$COMPOSE_FILE_NAME" up -d --remove-orphans \
+            || fail "docker compose up falló"
+
+          echo "=== esperando healthcheck de ${CONTAINER_NAME} ==="
+          status="unknown"
+          for _ in $(seq 1 30); do
+            status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$CONTAINER_NAME" 2>/dev/null || echo missing)"
+            case "$status" in
+              healthy) break ;;
+              unhealthy|exited|dead|missing) fail "Contenedor en estado '${status}'" ;;
+            esac
+            sleep 2
+          done
+          [ "$status" = "healthy" ] || fail "El contenedor no llegó a healthy (estado: ${status})"
+
+          running_image="$(docker inspect -f '{{.Config.Image}}' "$CONTAINER_NAME")"
+          [ "$running_image" = "$APP_IMAGE" ] \
+            || fail "Imagen en ejecución (${running_image}) no coincide con la desplegada (${APP_IMAGE})"
+
+          echo "=== verificación HTTP en 127.0.0.1:${HOST_PORT} ==="
+          http_ok=0
+          for _ in $(seq 1 10); do
+            if curl -fsS "http://127.0.0.1:${HOST_PORT}/healthz" >/dev/null \
+              && curl -fsS "http://127.0.0.1:${HOST_PORT}/" | grep -q 'id="root"'; then
+              http_ok=1
+              break
+            fi
+            sleep 3
+          done
+          [ "$http_ok" -eq 1 ] || fail "El frontend no responde en http://127.0.0.1:${HOST_PORT}"
+
+          # Limpieza acotada: solo imágenes viejas de ESTE repo; se conservan las 3 más recientes.
+          docker image ls "$IMAGE_NAME" --format '{{.Tag}}' \
+            | grep -vx -e latest -e '<none>' -e "${APP_IMAGE##*:}" \
+            | tail -n +3 \
+            | while read -r tag; do docker image rm "${IMAGE_NAME}:${tag}" >/dev/null 2>&1 || true; done
+
+          docker compose -f "$COMPOSE_FILE_NAME" ps
+          echo "Deploy OK: ${APP_IMAGE} → http://127.0.0.1:${HOST_PORT}"
+          REMOTE
+
+          remote_env="$(printf 'DEPLOY_PATH=%q APP_IMAGE=%q IMAGE_NAME=%q CONTAINER_NAME=%q COMPOSE_FILE_NAME=%q HOST_PORT=%q GHCR_USER=%q' \
+            "$CONTABO_DEPLOY_PATH" "$APP_IMAGE" "$IMAGE_NAME" "$CONTAINER_NAME" "$COMPOSE_FILE_NAME" "$HOST_PORT" "$GHCR_USER")"
+
+          # Primera línea de stdin = token (no aparece en la línea de comandos remota); resto = script.
+          { printf '%s\n' "$GHCR_TOKEN"; cat "$RUNNER_TEMP/remote-deploy.sh"; } \
+            | ssh contabo "${remote_env} bash -c 'IFS= read -r GHCR_TOKEN; export GHCR_TOKEN; exec bash -s'"
