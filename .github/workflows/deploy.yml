@@ -272,8 +272,9 @@ jobs:
           [ "$http_ok" -eq 1 ] || fail "El frontend no responde en http://127.0.0.1:${HOST_PORT}"
 
           # Limpieza acotada: solo imágenes viejas de ESTE repo; se conservan las 3 más recientes.
+          # grep devuelve 1 si no hay imágenes viejas (primer deploy): no debe tumbar el script.
           docker image ls "$IMAGE_NAME" --format '{{.Tag}}' \
-            | grep -vx -e latest -e '<none>' -e "${APP_IMAGE##*:}" \
+            | { grep -vx -e latest -e '<none>' -e "${APP_IMAGE##*:}" || true; } \
             | tail -n +3 \
             | while read -r tag; do docker image rm "${IMAGE_NAME}:${tag}" >/dev/null 2>&1 || true; done
 
