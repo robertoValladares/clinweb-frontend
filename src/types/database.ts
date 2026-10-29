@@ -40,6 +40,44 @@ export interface AppointmentLog {
   estado: string | null
 }
 
+export type BotBookingVerification = 'presente' | 'movida' | 'no_encontrada' | 'error'
+
+export interface BotAgendaRow {
+  id: string
+  created_at: string
+  source: 'bot' | 'backfill' | 'sync'
+  subscriber_id: string | null
+  channel: string | null
+  paciente_nombre: string | null
+  contacto_nombre: string | null
+  paciente_cedula: string | null
+  paciente_celular: string | null
+  paciente_email: string | null
+  fecha_hora_inicio: string
+  duracion_min: number
+  motivo: string | null
+  tipo_pago: string | null
+  co_paciente: string | null
+  co_etapa_solicitud: string | null
+  deposito_usd: number | null
+  comprobante_url: string | null
+  verificacion: BotBookingVerification | null
+  verificacion_detalle: string | null
+  cliniweb_nombre: string | null
+  cliniweb_inicio: string | null
+  last_checked_at: string | null
+  last_seen_at: string | null
+  first_missing_at: string | null
+}
+
+export interface BotBookingCheck {
+  id: number
+  booking_id: string
+  checked_at: string
+  status: BotBookingVerification
+  detail: string | null
+}
+
 export type DateRangeKey = 'today' | '7d' | '30d' | 'month' | 'all'
 
 export interface DateRange {

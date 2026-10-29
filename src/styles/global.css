@@ -310,3 +310,130 @@ th {
   color: #14534d;
   font-size: 0.75rem;
 }
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab-btn {
+  border: none;
+  background: none;
+  padding: 10px 14px;
+  color: var(--muted);
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.tab-btn.active {
+  color: var(--ink);
+  border-bottom-color: var(--teal);
+}
+
+.range-btn.active.alert {
+  background: var(--coral);
+  border-color: var(--coral);
+}
+
+.agenda-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.agenda-toolbar .search {
+  margin-bottom: 0;
+}
+
+.agenda-day {
+  margin-top: 18px;
+}
+
+td .chip {
+  margin-left: 6px;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-badge.ok {
+  background: var(--teal-soft);
+  color: #14534d;
+}
+
+.status-badge.warn {
+  background: #fdf1d8;
+  color: #7a5310;
+}
+
+.status-badge.danger {
+  background: #fdeceb;
+  color: #7a2e22;
+}
+
+.status-badge.muted {
+  background: #eceff0;
+  color: var(--muted);
+}
+
+.row-alert td {
+  background: #fff6f4;
+}
+
+.row-past td {
+  color: var(--muted);
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.link-btn {
+  border: none;
+  background: none;
+  color: var(--teal);
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.booking-detail {
+  padding: 6px 4px 10px;
+}
+
+.booking-detail h3 {
+  font-size: 0.9rem;
+  margin: 14px 0 6px;
+}
+
+.booking-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 6px 18px;
+}
+
+.check-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
